@@ -25,6 +25,8 @@ const STATUSES = [
   ['delivered', 'Delivered']
 ];
 
+const STUDIO_IMAGE = 'https://images.unsplash.com/photo-1606760227091-3dd870d97f1d?auto=format&fit=crop&w=1600&q=80';
+
 function migrate() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -136,6 +138,16 @@ function money(value) {
   return `₹${Number(value || 0).toLocaleString('en-IN')}`;
 }
 
+function daysUntil(dateValue) {
+  if (!dateValue) return 'No deadline';
+  const today = new Date();
+  const deadline = new Date(`${dateValue}T00:00:00`);
+  const diff = Math.ceil((deadline - today) / 86400000);
+  if (diff < 0) return `${Math.abs(diff)}d late`;
+  if (diff === 0) return 'Due today';
+  return `${diff}d left`;
+}
+
 function progress(status) {
   const index = Math.max(0, STATUSES.findIndex(([key]) => key === status));
   return Math.round(((index + 1) / STATUSES.length) * 100);
@@ -168,7 +180,7 @@ function layout(req, title, body) {
     </head>
     <body>
       <header class="topbar">
-        <a class="brand" href="/"><span>R</span> Company</a>
+        <a class="brand" href="/"><span>R</span><strong>R Company</strong><small>atelier ops</small></a>
         <nav>${nav}</nav>
       </header>
       <main>${body}</main>
@@ -178,46 +190,68 @@ function layout(req, title, body) {
 
 function orderCard(order) {
   return `<article class="order-card">
-    <div class="row spread">
+    <div class="order-top">
       <div>
         <p class="eyebrow">${order.order_number}</p>
         <h3>${order.customer_name}</h3>
+        <p class="shopline">${order.shop_name || 'Shopkeeper'} · ${order.product_type}</p>
       </div>
       <span class="badge ${order.priority}">${order.priority}</span>
     </div>
-    <p>${order.product_type} · ${order.fabric_type} · ${order.color}</p>
+    <p class="brief">${order.fabric_type} in ${order.color}. ${order.embroidery_details}</p>
     <div class="meter"><span style="width:${progress(order.status)}%"></span></div>
-    <div class="row spread muted">
+    <div class="order-meta">
       <span>${statusLabel(order.status)}</span>
+      <span>${daysUntil(order.deadline)}</span>
       <span>${money(order.estimated_cost)}</span>
     </div>
-    <a class="button ghost" href="/orders/${order.id}">Open order</a>
+    <a class="button ghost full-button" href="/orders/${order.id}">Open production packet</a>
   </article>`;
+}
+
+function statCard(label, value, detail) {
+  return `<article class="stat-card"><span>${label}</span><strong>${value}</strong><small>${detail}</small></article>`;
+}
+
+function workflowRail(activeStatus) {
+  return `<div class="workflow-rail">${STATUSES.map(([key, label], index) => `
+    <span class="${STATUSES.findIndex(([status]) => status === activeStatus) >= index ? 'done' : ''}">
+      <b>${index + 1}</b>${label}
+    </span>
+  `).join('')}</div>`;
 }
 
 app.get('/', (req, res) => {
   const stats = {
     orders: db.prepare('SELECT COUNT(*) AS count FROM orders').get().count,
     active: db.prepare("SELECT COUNT(*) AS count FROM orders WHERE status NOT IN ('delivered')").get().count,
-    revenue: db.prepare('SELECT SUM(estimated_cost) AS value FROM orders').get().value || 0
+    revenue: db.prepare('SELECT SUM(estimated_cost) AS value FROM orders').get().value || 0,
+    urgent: db.prepare("SELECT COUNT(*) AS count FROM orders WHERE priority IN ('urgent', 'high')").get().count
   };
+  const featured = db.prepare('SELECT o.*, u.shop_name FROM orders o JOIN users u ON u.id = o.user_id ORDER BY o.estimated_cost DESC LIMIT 3').all();
   res.send(layout(req, 'Order command center', `
-    <section class="hero">
-      <div>
-        <p class="eyebrow">B2B tailoring and embroidery workflow</p>
-        <h1>R Company order command center</h1>
-        <p class="lede">Shopkeeper orders, admin workflow control, timeline tracking, fabric stock, payments, and delivery status in one focused web app.</p>
+    <section class="hero premium-hero" style="--hero-image:url('${STUDIO_IMAGE}')">
+      <div class="hero-copy">
+        <p class="eyebrow">Premium tailoring operations suite</p>
+        <h1>R Company Production OS</h1>
+        <p class="lede">A live command center for bridal embroidery, tailoring jobs, shopkeeper orders, fabric stock, payments, timelines, and dispatch control.</p>
         <div class="actions">
-          <a class="button" href="/login">Open demo</a>
+          <a class="button" href="/login">Enter command center</a>
           <a class="button secondary" href="/admin/orders">Admin board</a>
         </div>
       </div>
-      <aside class="hero-panel">
-        <div><strong>${stats.orders}</strong><span>Total orders</span></div>
-        <div><strong>${stats.active}</strong><span>Active jobs</span></div>
-        <div><strong>${money(stats.revenue)}</strong><span>Pipeline value</span></div>
+      <aside class="live-panel">
+        <div class="panel-head"><span></span><p>Live production pulse</p></div>
+        ${statCard('Pipeline value', money(stats.revenue), 'across active orders')}
+        ${statCard('Active jobs', stats.active, `${stats.urgent} high priority`)}
+        ${statCard('Workflow stages', STATUSES.length, 'from order to delivery')}
       </aside>
     </section>
+    <section class="section-head">
+      <p class="eyebrow">Featured jobs</p>
+      <h2>High-value production packets</h2>
+    </section>
+    <section class="grid cards featured">${featured.map(orderCard).join('')}</section>
   `));
 });
 
@@ -250,10 +284,16 @@ app.get('/logout', (req, res) => {
 app.get('/dashboard', requireAuth, (req, res) => {
   if (req.session.user.role === 'admin') return res.redirect('/admin/orders');
   const orders = db.prepare('SELECT * FROM orders WHERE user_id = ? ORDER BY updated_at DESC').all(req.session.user.id);
+  const value = orders.reduce((sum, order) => sum + Number(order.estimated_cost || 0), 0);
   res.send(layout(req, 'Shopkeeper dashboard', `
     <section class="page-head">
-      <div><p class="eyebrow">${req.session.user.shop_name}</p><h1>My orders</h1></div>
+      <div><p class="eyebrow">${req.session.user.shop_name}</p><h1>Shopkeeper workspace</h1></div>
       <a class="button" href="/orders/new">Create order</a>
+    </section>
+    <section class="stats-strip">
+      ${statCard('Orders', orders.length, 'submitted by your shop')}
+      ${statCard('Pipeline', money(value), 'estimated total')}
+      ${statCard('Next deadline', orders[0] ? daysUntil(orders[0].deadline) : 'None', 'latest active job')}
     </section>
     <section class="grid cards">${orders.map(orderCard).join('')}</section>
   `));
@@ -297,11 +337,12 @@ app.get('/orders/:id', requireAuth, (req, res) => {
   const notes = db.prepare('SELECT * FROM internal_notes WHERE order_id = ? ORDER BY created_at DESC').all(order.id);
   res.send(layout(req, order.order_number, `
     <section class="page-head">
-      <div><p class="eyebrow">${order.order_number}</p><h1>${order.customer_name}</h1><p>${order.shop_name} · ${order.product_type}</p></div>
+      <div><p class="eyebrow">${order.order_number}</p><h1>${order.customer_name}</h1><p>${order.shop_name} · ${order.product_type} · ${daysUntil(order.deadline)}</p></div>
       <span class="status">${statusLabel(order.status)}</span>
     </section>
+    ${workflowRail(order.status)}
     <section class="detail-grid">
-      <article class="panel">
+      <article class="panel production-packet">
         <h2>Order brief</h2>
         <dl>
           <dt>Fabric</dt><dd>${order.fabric_type} / ${order.color}</dd>
@@ -339,12 +380,26 @@ app.get('/admin/orders', requireAdmin, (req, res) => {
     ? db.prepare('SELECT o.*, u.shop_name FROM orders o JOIN users u ON u.id = o.user_id WHERE o.status = ? ORDER BY o.updated_at DESC').all(status)
     : db.prepare('SELECT o.*, u.shop_name FROM orders o JOIN users u ON u.id = o.user_id ORDER BY o.updated_at DESC').all();
   const fabrics = db.prepare('SELECT * FROM fabric_inventory ORDER BY meters_available ASC').all();
+  const allOrders = db.prepare('SELECT o.*, u.shop_name FROM orders o JOIN users u ON u.id = o.user_id ORDER BY o.updated_at DESC').all();
+  const totalValue = allOrders.reduce((sum, order) => sum + Number(order.estimated_cost || 0), 0);
+  const activeCount = allOrders.filter(order => order.status !== 'delivered').length;
+  const dueSoon = allOrders.filter(order => order.deadline && new Date(`${order.deadline}T00:00:00`) - new Date() < 7 * 86400000).length;
+  const board = STATUSES.map(([key, label]) => {
+    const items = allOrders.filter(order => order.status === key);
+    return `<section class="kanban-column"><header><span>${label}</span><b>${items.length}</b></header>${items.map(orderCard).join('') || '<p class="empty">No jobs in this stage</p>'}</section>`;
+  }).join('');
   res.send(layout(req, 'Admin board', `
     <section class="page-head">
-      <div><p class="eyebrow">Admin workflow</p><h1>Production board</h1></div>
+      <div><p class="eyebrow">Admin workflow</p><h1>Production command center</h1></div>
       <form method="get"><select name="status" onchange="this.form.submit()"><option value="">All statuses</option>${STATUSES.map(([key, label]) => `<option value="${key}" ${key === status ? 'selected' : ''}>${label}</option>`).join('')}</select></form>
     </section>
-    <section class="grid cards">${orders.map(order => orderCard(order).replace('Open order', `${order.shop_name} · Open`)).join('')}</section>
+    <section class="stats-strip">
+      ${statCard('Pipeline value', money(totalValue), 'current booked value')}
+      ${statCard('Active jobs', activeCount, `${allOrders.length} total orders`)}
+      ${statCard('Due within 7 days', dueSoon, 'needs supervision')}
+      ${statCard('Fabric alerts', fabrics.filter(f => f.meters_available <= f.reorder_level).length, 'below reorder level')}
+    </section>
+    ${status ? `<section class="grid cards">${orders.map(order => orderCard(order).replace('Open production packet', `${order.shop_name} · Open`)).join('')}</section>` : `<section class="kanban-board">${board}</section>`}
     <section class="panel wide">
       <h2>Fabric inventory</h2>
       <div class="table">
