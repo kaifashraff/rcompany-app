@@ -26,6 +26,7 @@ const STATUSES = [
 ];
 
 const STUDIO_IMAGE = 'https://images.unsplash.com/photo-1606760227091-3dd870d97f1d?auto=format&fit=crop&w=1600&q=80';
+const WORKSHOP_IMAGE = 'https://images.unsplash.com/photo-1556905055-8f358a7a47b2?auto=format&fit=crop&w=1200&q=80';
 
 function migrate() {
   db.exec(`
@@ -121,6 +122,54 @@ function seed() {
 migrate();
 seed();
 
+function ensureInvestorDemoData() {
+  const count = db.prepare('SELECT COUNT(*) AS count FROM orders').get().count;
+  if (count >= 14) return;
+
+  const demoHash = bcrypt.hashSync('Demo@123', 10);
+  const insertUser = db.prepare('INSERT OR IGNORE INTO users (email, password_hash, role, shop_name, contact_number) VALUES (?, ?, ?, ?, ?)');
+  insertUser.run('noor@bridalstudio.in', demoHash, 'shopkeeper', 'Noor Bridal Studio', '+91 98111 22110');
+  insertUser.run('mehta@couture.in', demoHash, 'shopkeeper', 'Mehta Couture House', '+91 98222 44220');
+  insertUser.run('royal@menswear.in', demoHash, 'shopkeeper', 'Royal Menswear', '+91 98333 66330');
+
+  const shop = (email) => db.prepare('SELECT id FROM users WHERE email = ?').get(email).id;
+  const rows = [
+    ['RC-20260527-006', shop('noor@bridalstudio.in'), 'Sana Mirza', 'Bridal Lehenga', 'Banarasi Silk', 'Wine', 'Dense hand zardozi with kundan neckline and scallop border', 'Bust 34, Waist 28, Skirt length 44', '2026-06-03', 'urgent', 68000, 25000, 'quality_check', 'Investor demo job: premium bridal order with approval checkpoint'],
+    ['RC-20260527-007', shop('mehta@couture.in'), 'Kavya Rao', 'Reception Gown', 'Organza', 'Pearl', 'Tone-on-tone threadwork with sequin trail', 'Bust 35, Waist 29, Length 58', '2026-06-11', 'high', 52000, 20000, 'embroidery', 'Send progress photos before stitching'],
+    ['RC-20260527-008', shop('royal@menswear.in'), 'Zeeshan Ali', 'Indo-Western Set', 'Raw Silk', 'Midnight Blue', 'Metallic collar motif and asymmetric panel embroidery', 'Chest 41, Shoulder 18.5, Length 42', '2026-06-06', 'high', 34000, 12000, 'stitching', 'Needs trial slot before final dispatch'],
+    ['RC-20260527-009', shop('noor@bridalstudio.in'), 'Ritika Bansal', 'Sangeet Cape', 'Net', 'Rose Gold', 'Crystal spray with embroidered shoulder structure', 'Cape 52, Sleeve 23', '2026-06-14', 'normal', 26000, 8000, 'fabric_procurement', 'Check net shade before work starts'],
+    ['RC-20260527-010', shop('mehta@couture.in'), 'Nazia Khan', 'Bridal Dupatta', 'Tulle', 'Ivory', 'Four-side border, naam embroidery, small bootis', '2.8m x 1.15m', '2026-06-02', 'urgent', 24000, 10000, 'ready', 'Ready but balance pending before dispatch'],
+    ['RC-20260527-011', shop('royal@menswear.in'), 'Arjun Sethi', 'Sherwani', 'Brocade', 'Antique Gold', 'Hand-done buttons, cuff, and pocket detail', 'Chest 40, Shoulder 18, Length 43', '2026-06-18', 'normal', 30000, 10000, 'pending', 'Awaiting final measurement confirmation'],
+    ['RC-20260527-012', shop('noor@bridalstudio.in'), 'Misha Kapoor', 'Mehendi Set', 'Chanderi', 'Lime', 'Mirror-work border and gota highlights', 'Bust 33, Waist 27, Length 40', '2026-06-09', 'high', 21000, 7000, 'dispatched', 'Courier tracking shared with shopkeeper'],
+    ['RC-20260527-013', shop('mehta@couture.in'), 'Anaya Jain', 'Cocktail Saree', 'Crepe', 'Black', 'Minimal crystal linework on pallu', '6.3m saree, blouse 1m', '2026-06-21', 'normal', 19000, 6000, 'pending', 'Low complexity, can batch with black thread jobs'],
+    ['RC-20260527-014', shop('royal@menswear.in'), 'Kabir Malhotra', 'Kurta Jacket', 'Linen Silk', 'Sage', 'Fine resham vines on jacket placket', 'Chest 42, Waist 36, Length 41', '2026-06-13', 'normal', 14500, 4500, 'embroidery', 'Karigar assigned: Rafiq']
+  ];
+
+  const insertOrder = db.prepare(`
+    INSERT OR IGNORE INTO orders (order_number, user_id, customer_name, product_type, fabric_type, color, embroidery_details, measurements, deadline, priority, estimated_cost, advance_amount, status, special_instructions)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const row of rows) {
+    const result = insertOrder.run(...row);
+    if (result.changes) {
+      db.prepare('INSERT INTO order_timeline (order_id, status, note) VALUES (?, ?, ?)').run(result.lastInsertRowid, row[12], 'Investor-grade demo seed');
+    }
+  }
+
+  const insertFabric = db.prepare('INSERT INTO fabric_inventory (fabric_name, color, meters_available, reorder_level) VALUES (?, ?, ?, ?)');
+  const fabricCount = db.prepare('SELECT COUNT(*) AS count FROM fabric_inventory').get().count;
+  if (fabricCount < 8) {
+    [
+      ['Banarasi Silk', 'Wine', 16, 8],
+      ['Organza', 'Pearl', 24, 10],
+      ['Brocade', 'Antique Gold', 6, 8],
+      ['Chanderi', 'Lime', 31, 12]
+    ].forEach((fabric) => insertFabric.run(...fabric));
+  }
+}
+
+ensureInvestorDemoData();
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
@@ -138,11 +187,16 @@ function money(value) {
   return `₹${Number(value || 0).toLocaleString('en-IN')}`;
 }
 
-function daysUntil(dateValue) {
-  if (!dateValue) return 'No deadline';
+function deadlineDays(dateValue) {
+  if (!dateValue) return null;
   const today = new Date();
   const deadline = new Date(`${dateValue}T00:00:00`);
-  const diff = Math.ceil((deadline - today) / 86400000);
+  return Math.ceil((deadline - today) / 86400000);
+}
+
+function daysUntil(dateValue) {
+  const diff = deadlineDays(dateValue);
+  if (diff === null) return 'No deadline';
   if (diff < 0) return `${Math.abs(diff)}d late`;
   if (diff === 0) return 'Due today';
   return `${diff}d left`;
@@ -166,10 +220,11 @@ function requireAdmin(req, res, next) {
 function layout(req, title, body) {
   const user = req.session.user;
   const nav = user ? `
+    <a href="/investor">Investor Demo</a>
     <a href="/dashboard">Dashboard</a>
     ${user.role === 'admin' ? '<a href="/admin/orders">Admin</a>' : '<a href="/orders/new">New Order</a>'}
     <a href="/logout">Logout</a>
-  ` : '<a href="/login">Login</a>';
+  ` : '<a href="/investor">Investor Demo</a><a href="/login">Login</a>';
   return `<!doctype html>
   <html lang="en">
     <head>
@@ -213,6 +268,34 @@ function statCard(label, value, detail) {
   return `<article class="stat-card"><span>${label}</span><strong>${value}</strong><small>${detail}</small></article>`;
 }
 
+function getAllOrders() {
+  return db.prepare('SELECT o.*, u.shop_name FROM orders o JOIN users u ON u.id = o.user_id ORDER BY o.updated_at DESC').all();
+}
+
+function businessSnapshot() {
+  const orders = getAllOrders();
+  const buyers = new Set(orders.map((order) => order.shop_name)).size;
+  const totalValue = orders.reduce((sum, order) => sum + Number(order.estimated_cost || 0), 0);
+  const advance = orders.reduce((sum, order) => sum + Number(order.advance_amount || 0), 0);
+  const active = orders.filter((order) => order.status !== 'delivered').length;
+  const risk = orders.filter((order) => {
+    const days = deadlineDays(order.deadline);
+    return ['urgent', 'high'].includes(order.priority) || (days !== null && days <= 7);
+  }).length;
+  return {
+    orders,
+    buyers,
+    totalValue,
+    advance,
+    active,
+    risk,
+    avgTicket: orders.length ? Math.round(totalValue / orders.length) : 0,
+    conversionLift: 38,
+    whatsappReduction: 64,
+    onTime: 91
+  };
+}
+
 function workflowRail(activeStatus) {
   return `<div class="workflow-rail">${STATUSES.map(([key, label], index) => `
     <span class="${STATUSES.findIndex(([status]) => status === activeStatus) >= index ? 'done' : ''}">
@@ -221,39 +304,90 @@ function workflowRail(activeStatus) {
   `).join('')}</div>`;
 }
 
-app.get('/', (req, res) => {
-  const stats = {
-    orders: db.prepare('SELECT COUNT(*) AS count FROM orders').get().count,
-    active: db.prepare("SELECT COUNT(*) AS count FROM orders WHERE status NOT IN ('delivered')").get().count,
-    revenue: db.prepare('SELECT SUM(estimated_cost) AS value FROM orders').get().value || 0,
-    urgent: db.prepare("SELECT COUNT(*) AS count FROM orders WHERE priority IN ('urgent', 'high')").get().count
-  };
-  const featured = db.prepare('SELECT o.*, u.shop_name FROM orders o JOIN users u ON u.id = o.user_id ORDER BY o.estimated_cost DESC LIMIT 3').all();
-  res.send(layout(req, 'Order command center', `
-    <section class="hero premium-hero" style="--hero-image:url('${STUDIO_IMAGE}')">
-      <div class="hero-copy">
-        <p class="eyebrow">Premium tailoring operations suite</p>
-        <h1>R Company Production OS</h1>
-        <p class="lede">A live command center for bridal embroidery, tailoring jobs, shopkeeper orders, fabric stock, payments, timelines, and dispatch control.</p>
+function investorPage(req) {
+  const snapshot = businessSnapshot();
+  const topOrders = snapshot.orders
+    .slice()
+    .sort((a, b) => Number(b.estimated_cost || 0) - Number(a.estimated_cost || 0))
+    .slice(0, 4);
+  const stagePreview = STATUSES.map(([key, label]) => {
+    const count = snapshot.orders.filter((order) => order.status === key).length;
+    return `<div><strong>${count}</strong><span>${label}</span></div>`;
+  }).join('');
+
+  return layout(req, 'Investor demo', `
+    <section class="investor-hero" style="--hero-image:url('${WORKSHOP_IMAGE}')">
+      <div class="investor-copy">
+        <p class="eyebrow">Investor demo · R Company OS</p>
+        <h1>Operating system for premium custom fashion production.</h1>
+        <p class="lede">R Company turns WhatsApp chaos, handwritten measurements, advance payments, karigar handoffs, fabric risk, and delivery deadlines into one investor-ready workflow layer.</p>
         <div class="actions">
-          <a class="button" href="/login">Enter command center</a>
-          <a class="button secondary" href="/admin/orders">Admin board</a>
+          <a class="button" href="/login">Open live app demo</a>
+          <a class="button secondary" href="/admin/orders">View production board</a>
         </div>
       </div>
-      <aside class="live-panel">
-        <div class="panel-head"><span></span><p>Live production pulse</p></div>
-        ${statCard('Pipeline value', money(stats.revenue), 'across active orders')}
-        ${statCard('Active jobs', stats.active, `${stats.urgent} high priority`)}
-        ${statCard('Workflow stages', STATUSES.length, 'from order to delivery')}
+      <aside class="deal-room">
+        <div class="panel-head"><span></span><p>Demo company pulse</p></div>
+        ${statCard('Booked pipeline', money(snapshot.totalValue), `${snapshot.orders.length} seeded production orders`)}
+        ${statCard('Advance collected', money(snapshot.advance), 'cash discipline visible')}
+        ${statCard('Shopkeeper accounts', snapshot.buyers, 'repeat B2B demand surface')}
       </aside>
     </section>
-    <section class="section-head">
-      <p class="eyebrow">Featured jobs</p>
-      <h2>High-value production packets</h2>
+
+    <section class="credibility-strip">
+      <span>Measurement vault</span>
+      <span>Advance / balance tracking</span>
+      <span>Karigar workflow</span>
+      <span>Fabric inventory risk</span>
+      <span>Shopkeeper self-service</span>
     </section>
-    <section class="grid cards featured">${featured.map(orderCard).join('')}</section>
-  `));
-});
+
+    <section class="section-head">
+      <p class="eyebrow">What investor sees in 90 seconds</p>
+      <h2>Not a brochure. A live operating loop.</h2>
+    </section>
+    <section class="demo-flow">
+      <article><b>1</b><h3>Shopkeeper books order</h3><p>Garment, fabric, color, measurements, deadline, payment advance, and embroidery details enter one production packet.</p></article>
+      <article><b>2</b><h3>Owner controls workload</h3><p>Orders move through procurement, embroidery, stitching, QC, ready, dispatch, and delivery with risk visible.</p></article>
+      <article><b>3</b><h3>Buyer stops calling</h3><p>Status, payment, expected delivery, and notes become self-service instead of scattered WhatsApp follow-ups.</p></article>
+    </section>
+
+    <section class="section-head">
+      <p class="eyebrow">Live demo data</p>
+      <h2>Production cockpit with business metrics.</h2>
+    </section>
+    <section class="stats-strip investor-stats">
+      ${statCard('Active jobs', snapshot.active, `${snapshot.risk} require attention`)}
+      ${statCard('Average ticket', money(snapshot.avgTicket), 'premium custom work')}
+      ${statCard('On-time target', `${snapshot.onTime}%`, 'demo operating SLA')}
+      ${statCard('WhatsApp reduction', `${snapshot.whatsappReduction}%`, 'self-service promise')}
+    </section>
+
+    <section class="ops-demo">
+      <article class="panel stage-panel">
+        <h2>Stage distribution</h2>
+        <div class="stage-preview">${stagePreview}</div>
+      </article>
+      <article class="panel thesis-panel">
+        <h2>Why this can become a real business</h2>
+        <ul>
+          <li>Indian boutiques already sell high-value custom orders but still coordinate through fragmented WhatsApp and notebooks.</li>
+          <li>Shopkeepers have repeat order behavior, making R Company a B2B workflow wedge, not a one-time ecommerce store.</li>
+          <li>Production data becomes the moat: measurements, deadlines, karigar capacity, fabric demand, advances, and delivery history.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="section-head">
+      <p class="eyebrow">Investor demo orders</p>
+      <h2>High-value jobs with operational detail.</h2>
+    </section>
+    <section class="grid cards featured">${topOrders.map(orderCard).join('')}</section>
+  `);
+}
+
+app.get('/', (req, res) => res.send(investorPage(req)));
+app.get('/investor', (req, res) => res.send(investorPage(req)));
 
 app.get('/login', (req, res) => {
   res.send(layout(req, 'Login', `

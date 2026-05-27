@@ -1,9 +1,10 @@
 # R Company App
 
-Full-stack order workflow app for R Company, built for shopkeeper order submission and admin production control.
+Investor-grade full-stack operating-system demo for R Company, built for premium custom fashion production.
 
 ## Features
 
+- Investor demo page with business pulse, operating thesis, stage distribution, and high-value production packets
 - Shopkeeper login and order dashboard
 - Admin production board
 - 8-stage tailoring and embroidery workflow
@@ -26,6 +27,7 @@ Demo credentials:
 
 - Admin: `admin@rcompany.com` / `Admin@123`
 - Shopkeeper: `arif@textiles.com` / `Demo@123`
+- Investor demo shopkeeper: `noor@bridalstudio.in` / `Demo@123`
 
 ## Smoke Test
 
