@@ -6,6 +6,8 @@ Investor-grade full-stack operating-system demo for R Company, built for premium
 
 - Investor demo page with business pulse, operating thesis, stage distribution, and high-value production packets
 - Investor control-room first screen with live product surface, owner triage, demo auto-login, and production packet deep links
+- R Company pillars from Kaif's voice note: B2B market acquisition, artisan zari core, flexible outsourcing, master/karigar routing, white-label delivery
+- Service modes: zari-only, master stitching, fabric sourcing + dyeing, full garment outsource, rush capacity rescue
 - Shopkeeper login and order dashboard
 - Admin production board
 - Owner decision queue with deadline risk, cash lock, dispatch readiness, and fabric watchlist

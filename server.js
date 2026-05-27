@@ -28,6 +28,47 @@ const STATUSES = [
 const STUDIO_IMAGE = 'https://images.unsplash.com/photo-1606760227091-3dd870d97f1d?auto=format&fit=crop&w=1600&q=80';
 const WORKSHOP_IMAGE = 'https://images.unsplash.com/photo-1556905055-8f358a7a47b2?auto=format&fit=crop&w=1200&q=80';
 
+const SERVICE_MODES = [
+  {
+    key: 'zari_only',
+    label: 'Zari / embroidery only',
+    promise: 'Boutique gives cut fabric or garment. R Company handles hand embroidery and returns it.',
+    tags: ['karigar network', 'cut piece', 'specialist work']
+  },
+  {
+    key: 'master_stitching',
+    label: 'Master stitching only',
+    promise: 'Shop has embroidery or fabric ready but needs a reliable master for stitching and finishing.',
+    tags: ['master tailor', 'fit', 'finishing']
+  },
+  {
+    key: 'fabric_dyeing',
+    label: 'Fabric sourcing + dyeing',
+    promise: 'R Company sources fabric, handles color/dyeing coordination, then moves the job into production.',
+    tags: ['fabric', 'color dyeing', 'procurement']
+  },
+  {
+    key: 'full_outsource',
+    label: 'Full garment outsource',
+    promise: 'Boutique or wholesaler gives the order. R Company handles fabric, embroidery, stitching, QC, and delivery.',
+    tags: ['end-to-end', 'delivery', 'white-label']
+  },
+  {
+    key: 'rush_capacity',
+    label: 'Rush capacity rescue',
+    promise: 'When the shop has sales but no free hands, R Company absorbs urgent zari or stitching capacity.',
+    tags: ['urgent', 'overflow', 'deadline']
+  }
+];
+
+const R_COMPANY_PILLARS = [
+  ['B2B market acquisition', 'Walk into any boutique, shopkeeper, or wholesaler and sell one simple operating promise: give orders through R Company instead of chasing individual karigars.'],
+  ['Artisan zari core', 'The wedge is specialist hand zari and embroidery work, not generic ecommerce. Every workflow starts from premium craft capacity.'],
+  ['Flexible outsourcing', 'The buyer can outsource only embroidery, only stitching, fabric + dyeing, or the entire finished garment.'],
+  ['Master and karigar routing', 'Every order becomes a production packet that routes work between zari karigar, master tailor, dyer, fabric source, QC, and dispatch.'],
+  ['White-label delivery layer', 'R Company can return work to the shop or deliver finished pieces to the shopkeeper customer as an invisible production backend.']
+];
+
 function migrate() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -54,6 +95,10 @@ function migrate() {
       estimated_cost INTEGER DEFAULT 0,
       advance_amount INTEGER DEFAULT 0,
       status TEXT DEFAULT 'pending',
+      service_scope TEXT DEFAULT 'zari_only',
+      fabric_responsibility TEXT DEFAULT 'customer_supplied',
+      stitching_responsibility TEXT DEFAULT 'customer_handles',
+      delivery_scope TEXT DEFAULT 'return_to_shopkeeper',
       special_instructions TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -80,6 +125,18 @@ function migrate() {
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `);
+}
+
+function ensureOrderColumn(name, definition) {
+  const columns = db.prepare('PRAGMA table_info(orders)').all().map(column => column.name);
+  if (!columns.includes(name)) db.exec(`ALTER TABLE orders ADD COLUMN ${name} ${definition}`);
+}
+
+function ensureOrderServiceColumns() {
+  ensureOrderColumn('service_scope', "TEXT DEFAULT 'zari_only'");
+  ensureOrderColumn('fabric_responsibility', "TEXT DEFAULT 'customer_supplied'");
+  ensureOrderColumn('stitching_responsibility', "TEXT DEFAULT 'customer_handles'");
+  ensureOrderColumn('delivery_scope', "TEXT DEFAULT 'return_to_shopkeeper'");
 }
 
 function seed() {
@@ -120,6 +177,7 @@ function seed() {
 }
 
 migrate();
+ensureOrderServiceColumns();
 seed();
 
 function ensureInvestorDemoData() {
@@ -170,6 +228,28 @@ function ensureInvestorDemoData() {
 
 ensureInvestorDemoData();
 
+function applyVoiceNoteServiceModes() {
+  const updates = [
+    ['full_outsource', 'rcompany_sources', 'full_stitching', 'deliver_to_end_customer', 'RC-20260527-006'],
+    ['zari_only', 'customer_supplied', 'cut_piece_only', 'return_to_shopkeeper', 'RC-20260527-007'],
+    ['master_stitching', 'customer_supplied', 'rcompany_master', 'return_to_shopkeeper', 'RC-20260527-008'],
+    ['fabric_dyeing', 'rcompany_dyes', 'customer_handles', 'return_to_shopkeeper', 'RC-20260527-009'],
+    ['rush_capacity', 'customer_supplied', 'rcompany_master', 'deliver_to_end_customer', 'RC-20260527-010'],
+    ['zari_only', 'customer_supplied', 'customer_handles', 'return_to_shopkeeper', 'RC-20260527-011'],
+    ['full_outsource', 'rcompany_sources', 'full_stitching', 'deliver_to_end_customer', 'RC-20260527-012'],
+    ['fabric_dyeing', 'source_and_dye', 'customer_handles', 'return_to_shopkeeper', 'RC-20260527-013'],
+    ['zari_only', 'customer_supplied', 'cut_piece_only', 'return_to_shopkeeper', 'RC-20260527-014']
+  ];
+  const update = db.prepare(`
+    UPDATE orders
+    SET service_scope = ?, fabric_responsibility = ?, stitching_responsibility = ?, delivery_scope = ?
+    WHERE order_number = ?
+  `);
+  for (const row of updates) update.run(...row);
+}
+
+applyVoiceNoteServiceModes();
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
@@ -205,6 +285,40 @@ function daysUntil(dateValue) {
 function progress(status) {
   const index = Math.max(0, STATUSES.findIndex(([key]) => key === status));
   return Math.round(((index + 1) / STATUSES.length) * 100);
+}
+
+function serviceMode(key) {
+  return SERVICE_MODES.find(mode => mode.key === key) || SERVICE_MODES[0];
+}
+
+function serviceLabel(key) {
+  return serviceMode(key).label;
+}
+
+function scopeLabel(type, key) {
+  const labels = {
+    fabric: {
+      customer_supplied: 'Buyer supplies fabric',
+      rcompany_sources: 'R Company sources fabric',
+      rcompany_dyes: 'R Company handles dyeing',
+      source_and_dye: 'R Company sources + dyes'
+    },
+    stitching: {
+      customer_handles: 'Buyer handles stitching',
+      rcompany_master: 'R Company master stitches',
+      cut_piece_only: 'Cut piece only',
+      full_stitching: 'Full stitching by R Company'
+    },
+    delivery: {
+      return_to_shopkeeper: 'Return to shopkeeper',
+      deliver_to_end_customer: 'Deliver to end customer'
+    }
+  };
+  return labels[type]?.[key] || key || 'Not set';
+}
+
+function optionTags(items, selected) {
+  return items.map(item => `<option value="${item.key}" ${item.key === selected ? 'selected' : ''}>${item.label}</option>`).join('');
 }
 
 function requireAuth(req, res, next) {
@@ -253,6 +367,7 @@ function orderCard(order) {
       </div>
       <span class="badge ${order.priority}">${order.priority}</span>
     </div>
+    <span class="service-chip">${serviceLabel(order.service_scope)}</span>
     <p class="brief">${order.fabric_type} in ${order.color}. ${order.embroidery_details}</p>
     <div class="meter"><span style="width:${progress(order.status)}%"></span></div>
     <div class="order-meta">
@@ -339,7 +454,7 @@ function compactOrderRow(order) {
   return `<a class="ops-row ${riskClass(order)}" href="/orders/${order.id}">
     <span>
       <strong>${order.customer_name}</strong>
-      <small>${order.shop_name} · ${order.product_type}</small>
+      <small>${order.shop_name} · ${serviceLabel(order.service_scope)}</small>
     </span>
     <b>${statusLabel(order.status)}</b>
     <em>${riskText(order)}</em>
@@ -352,6 +467,22 @@ function moduleCard(title, copy, tags) {
     <h3>${title}</h3>
     <p>${copy}</p>
     <div>${tags.map(tag => `<span>${tag}</span>`).join('')}</div>
+  </article>`;
+}
+
+function pillarCard(pillar, index) {
+  return `<article class="pillar-card">
+    <b>0${index + 1}</b>
+    <h3>${pillar[0]}</h3>
+    <p>${pillar[1]}</p>
+  </article>`;
+}
+
+function serviceModeCard(mode) {
+  return `<article class="service-mode-card">
+    <h3>${mode.label}</h3>
+    <p>${mode.promise}</p>
+    <div>${mode.tags.map(tag => `<span>${tag}</span>`).join('')}</div>
   </article>`;
 }
 
@@ -379,9 +510,9 @@ function investorPage(req) {
   return layout(req, 'Investor demo', `
     <section class="command-hero" style="--hero-image:url('${WORKSHOP_IMAGE}')">
       <aside class="investor-sidebar">
-        <p class="eyebrow">R Company Investor Room</p>
-        <h1>Premium fashion production, controlled like a real operating system.</h1>
-        <p>Built for boutiques and embroidery workshops where every missed measurement, fabric delay, unpaid balance, and WhatsApp follow-up costs money.</p>
+        <p class="eyebrow">R Company artisan OS</p>
+        <h1>One app to sell zari, master, dyeing, and full garment capacity to any market.</h1>
+        <p>Walk into a boutique, wholesaler, or shopkeeper and show this: they can outsource only hand zari, only stitching, fabric + dyeing, or the whole finished piece through R Company.</p>
         <div class="actions">
           <a class="button" href="/demo/admin">Enter admin demo</a>
           <a class="button secondary" href="/demo/shopkeeper">Shopkeeper view</a>
@@ -390,6 +521,7 @@ function investorPage(req) {
           <span><b>${snapshot.orders.length}</b> live demo orders</span>
           <span><b>${money(snapshot.totalValue)}</b> booked pipeline</span>
           <span><b>${snapshot.buyers}</b> B2B shopkeeper accounts</span>
+          <span><b>${SERVICE_MODES.length}</b> outsourcing modes</span>
         </div>
       </aside>
 
@@ -402,12 +534,12 @@ function investorPage(req) {
           <article class="active-packet">
             <p class="eyebrow">Production packet</p>
             <h2>${heroOrder.customer_name}</h2>
-            <p>${heroOrder.product_type} for ${heroOrder.shop_name}. ${heroOrder.fabric_type} / ${heroOrder.color}. ${heroOrder.embroidery_details}</p>
+            <p>${serviceLabel(heroOrder.service_scope)} for ${heroOrder.shop_name}. ${heroOrder.product_type}, ${heroOrder.fabric_type} / ${heroOrder.color}. ${heroOrder.embroidery_details}</p>
             <div class="packet-facts">
               <div><span>Order value</span><strong>${money(heroOrder.estimated_cost)}</strong></div>
               <div><span>Advance</span><strong>${money(heroOrder.advance_amount)}</strong></div>
               <div><span>Deadline</span><strong>${daysUntil(heroOrder.deadline)}</strong></div>
-              <div><span>Risk</span><strong>${riskText(heroOrder)}</strong></div>
+              <div><span>Scope</span><strong>${serviceLabel(heroOrder.service_scope)}</strong></div>
             </div>
             ${workflowRail(heroOrder.status)}
             <a class="button ghost full-button" href="/demo/order/${heroOrder.id}">Open this order packet</a>
@@ -424,18 +556,30 @@ function investorPage(req) {
       ${statCard('Booked pipeline', money(snapshot.totalValue), `${snapshot.orders.length} active and historical jobs`)}
       ${statCard('Advance collected', money(snapshot.advance), `${money(snapshot.outstanding)} balance visible`)}
       ${statCard('Due this week', snapshot.dueThisWeek, `${snapshot.risk} jobs need owner attention`)}
-      ${statCard('Gross margin target', `${snapshot.grossMargin}%`, 'premium custom production model')}
+      ${statCard('Service modes', SERVICE_MODES.length, 'zari, stitching, dyeing, full outsource')}
     </section>
+
+    <section class="section-head">
+      <p class="eyebrow">Voice note converted into pillars</p>
+      <h2>R Company is outsourced artisan infrastructure.</h2>
+    </section>
+    <section class="pillar-grid">${R_COMPANY_PILLARS.map(pillarCard).join('')}</section>
+
+    <section class="section-head">
+      <p class="eyebrow">What a boutique can order</p>
+      <h2>Not one product. Multiple production scopes.</h2>
+    </section>
+    <section class="service-mode-grid">${SERVICE_MODES.map(serviceModeCard).join('')}</section>
 
     <section class="section-head">
       <p class="eyebrow">Built from actual market pattern</p>
       <h2>The app proves the workflow, not just the brand.</h2>
     </section>
     <section class="module-grid">
-      ${moduleCard('Shopkeeper order desk', 'A boutique can create a rich order packet with garment, fabric, measurement, deadline, priority, and instructions instead of sending scattered WhatsApp messages.', ['intake', 'measurements', 'repeat orders'])}
-      ${moduleCard('Production command center', 'The owner sees every order by production stage, risk level, due date, value, and next action before it becomes a late delivery.', ['kanban', 'deadlines', 'handoffs'])}
-      ${moduleCard('Payment and delivery control', 'Advance, balance, delivery readiness, dispatch status, and internal notes stay tied to the order instead of living in memory.', ['advance', 'balance', 'dispatch'])}
-      ${moduleCard('Inventory watchlist', 'Fabric stock and reorder alerts show the operational wedge investors expect from a real workshop system.', ['fabric', 'reorder', 'risk'])}
+      ${moduleCard('Market-facing sales tool', 'R Company can show the same app to a boutique owner, wholesaler, menswear shop, or fabric trader and let them pick exactly what they want outsourced.', ['boutique', 'wholesaler', 'shopkeeper'])}
+      ${moduleCard('Production command center', 'The owner sees every order by service mode, production stage, risk level, due date, value, and next action before it becomes a late delivery.', ['kanban', 'deadlines', 'handoffs'])}
+      ${moduleCard('Karigar and master layer', 'Each order can separate zari work, stitching, dyeing, fabric procurement, QC, and delivery so R Company can route capacity cleanly.', ['zari', 'master', 'dyeing'])}
+      ${moduleCard('White-label delivery control', 'The work can return to the shopkeeper or go directly to the end customer while the boutique keeps the relationship.', ['return', 'direct delivery', 'backend'])}
     </section>
 
     <section class="ops-demo">
@@ -450,9 +594,9 @@ function investorPage(req) {
       <article class="panel thesis-panel">
         <h2>Investor thesis</h2>
         <ul>
-          <li>Tailoring software references converge on the same pain: measurements, promised dates, production tracking, payments, and customer status calls.</li>
-          <li>R Company can start as its own workshop OS, then expand into a B2B portal for boutiques that already bring repeat premium orders.</li>
-          <li>The data moat is operational: measurement history, fabric demand, karigar capacity, payment discipline, and delivery reliability.</li>
+          <li>R Company is a B2B craft backend, not a consumer fashion store: boutiques already own the customer, R Company owns production capacity.</li>
+          <li>The wedge is premium hand zari embroidery, then expansion into stitching masters, dyeing partners, fabric sourcing, and white-label delivery.</li>
+          <li>The data moat is operational: which shop sends work, which karigar can execute, which fabric/color repeats, which deadlines and payments are reliable.</li>
         </ul>
       </article>
     </section>
@@ -464,6 +608,25 @@ function investorPage(req) {
     <section class="grid cards featured">${topOrders.map(orderCard).join('')}</section>
   `);
 }
+
+const FABRIC_OPTIONS = [
+  { key: 'customer_supplied', label: 'Buyer supplies fabric' },
+  { key: 'rcompany_sources', label: 'R Company sources fabric' },
+  { key: 'rcompany_dyes', label: 'R Company handles dyeing' },
+  { key: 'source_and_dye', label: 'R Company sources + dyes' }
+];
+
+const STITCHING_OPTIONS = [
+  { key: 'customer_handles', label: 'Buyer handles stitching' },
+  { key: 'rcompany_master', label: 'R Company master stitches' },
+  { key: 'cut_piece_only', label: 'Cut piece / embroidery only' },
+  { key: 'full_stitching', label: 'Full stitching by R Company' }
+];
+
+const DELIVERY_OPTIONS = [
+  { key: 'return_to_shopkeeper', label: 'Return to shopkeeper' },
+  { key: 'deliver_to_end_customer', label: 'Deliver to end customer' }
+];
 
 app.get('/', (req, res) => res.send(investorPage(req)));
 app.get('/investor', (req, res) => res.send(investorPage(req)));
@@ -530,7 +693,7 @@ app.get('/dashboard', requireAuth, (req, res) => {
       <div>
         <p class="eyebrow">Client-ready status</p>
         <h2>${nextOrder.customer_name} · ${nextOrder.product_type}</h2>
-        <p>${statusLabel(nextOrder.status)}. ${daysUntil(nextOrder.deadline)}. Advance ${money(nextOrder.advance_amount)} against ${money(nextOrder.estimated_cost)} estimate.</p>
+        <p>${serviceLabel(nextOrder.service_scope)}. ${statusLabel(nextOrder.status)}. ${daysUntil(nextOrder.deadline)}. Advance ${money(nextOrder.advance_amount)} against ${money(nextOrder.estimated_cost)} estimate.</p>
       </div>
       ${workflowRail(nextOrder.status)}
       <a class="button ghost" href="/orders/${nextOrder.id}">Open status page</a>
@@ -543,6 +706,12 @@ app.get('/orders/new', requireAuth, (req, res) => {
   res.send(layout(req, 'New order', `
     <section class="page-head"><div><p class="eyebrow">Shopkeeper portal</p><h1>Create order</h1></div></section>
     <form class="form-grid panel wide" method="post" action="/orders">
+      <label class="full">What should R Company handle?
+        <select name="service_scope">${optionTags(SERVICE_MODES, 'zari_only')}</select>
+      </label>
+      <label>Fabric responsibility <select name="fabric_responsibility">${optionTags(FABRIC_OPTIONS, 'customer_supplied')}</select></label>
+      <label>Stitching responsibility <select name="stitching_responsibility">${optionTags(STITCHING_OPTIONS, 'customer_handles')}</select></label>
+      <label class="full">Delivery scope <select name="delivery_scope">${optionTags(DELIVERY_OPTIONS, 'return_to_shopkeeper')}</select></label>
       <label>Customer name <input name="customer_name" required></label>
       <label>Product type <input name="product_type" placeholder="Lehenga, Sherwani, Saree" required></label>
       <label>Fabric type <input name="fabric_type" required></label>
@@ -562,9 +731,25 @@ app.post('/orders', requireAuth, (req, res) => {
   const date = new Date().toISOString().slice(0, 10).replaceAll('-', '');
   const orderNumber = `RC-${date}-${String(count).padStart(3, '0')}`;
   const result = db.prepare(`
-    INSERT INTO orders (order_number, user_id, customer_name, product_type, fabric_type, color, embroidery_details, measurements, deadline, priority, special_instructions)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(orderNumber, req.session.user.id, req.body.customer_name, req.body.product_type, req.body.fabric_type, req.body.color, req.body.embroidery_details, req.body.measurements, req.body.deadline, req.body.priority, req.body.special_instructions);
+    INSERT INTO orders (order_number, user_id, customer_name, product_type, fabric_type, color, embroidery_details, measurements, deadline, priority, service_scope, fabric_responsibility, stitching_responsibility, delivery_scope, special_instructions)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    orderNumber,
+    req.session.user.id,
+    req.body.customer_name,
+    req.body.product_type,
+    req.body.fabric_type,
+    req.body.color,
+    req.body.embroidery_details,
+    req.body.measurements,
+    req.body.deadline,
+    req.body.priority,
+    req.body.service_scope,
+    req.body.fabric_responsibility,
+    req.body.stitching_responsibility,
+    req.body.delivery_scope,
+    req.body.special_instructions
+  );
   db.prepare('INSERT INTO order_timeline (order_id, status, note) VALUES (?, ?, ?)').run(result.lastInsertRowid, 'pending', 'Order submitted by shopkeeper');
   res.redirect(`/orders/${result.lastInsertRowid}`);
 });
@@ -586,6 +771,10 @@ app.get('/orders/:id', requireAuth, (req, res) => {
         <h2>Order brief</h2>
         <dl>
           <dt>Fabric</dt><dd>${order.fabric_type} / ${order.color}</dd>
+          <dt>Service mode</dt><dd>${serviceLabel(order.service_scope)}</dd>
+          <dt>Fabric scope</dt><dd>${scopeLabel('fabric', order.fabric_responsibility)}</dd>
+          <dt>Stitching scope</dt><dd>${scopeLabel('stitching', order.stitching_responsibility)}</dd>
+          <dt>Delivery</dt><dd>${scopeLabel('delivery', order.delivery_scope)}</dd>
           <dt>Embroidery</dt><dd>${order.embroidery_details}</dd>
           <dt>Measurements</dt><dd>${order.measurements || 'Not added'}</dd>
           <dt>Deadline</dt><dd>${order.deadline || 'Not set'}</dd>
