@@ -1,0 +1,19 @@
+{
+  "name": "rcompany-app",
+  "version": "1.0.0",
+  "description": "R Company full-stack order workflow platform",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "NODE_ENV=development node server.js",
+    "smoke": "node scripts/smoke.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "express": "^5.1.0",
+    "express-session": "^1.18.2"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
