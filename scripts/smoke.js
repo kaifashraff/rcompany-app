@@ -1,6 +1,7 @@
 const http = require('http');
 
-const url = process.env.SMOKE_URL || 'http://127.0.0.1:3000/health';
+const port = process.env.PORT || 3000;
+const url = process.env.SMOKE_URL || `http://127.0.0.1:${port}/health`;
 
 http.get(url, (res) => {
   let body = '';

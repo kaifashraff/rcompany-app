@@ -277,23 +277,54 @@ function businessSnapshot() {
   const buyers = new Set(orders.map((order) => order.shop_name)).size;
   const totalValue = orders.reduce((sum, order) => sum + Number(order.estimated_cost || 0), 0);
   const advance = orders.reduce((sum, order) => sum + Number(order.advance_amount || 0), 0);
+  const outstanding = Math.max(0, totalValue - advance);
   const active = orders.filter((order) => order.status !== 'delivered').length;
   const risk = orders.filter((order) => {
     const days = deadlineDays(order.deadline);
     return ['urgent', 'high'].includes(order.priority) || (days !== null && days <= 7);
+  }).length;
+  const overdue = orders.filter((order) => {
+    const days = deadlineDays(order.deadline);
+    return days !== null && days < 0 && order.status !== 'delivered';
+  }).length;
+  const dueThisWeek = orders.filter((order) => {
+    const days = deadlineDays(order.deadline);
+    return days !== null && days >= 0 && days <= 7 && order.status !== 'delivered';
   }).length;
   return {
     orders,
     buyers,
     totalValue,
     advance,
+    outstanding,
     active,
     risk,
+    overdue,
+    dueThisWeek,
     avgTicket: orders.length ? Math.round(totalValue / orders.length) : 0,
     conversionLift: 38,
     whatsappReduction: 64,
-    onTime: 91
+    onTime: 91,
+    repeatIntent: 72,
+    grossMargin: 31
   };
+}
+
+function riskClass(order) {
+  const days = deadlineDays(order.deadline);
+  if (days !== null && days < 0) return 'danger';
+  if (order.priority === 'urgent' || (days !== null && days <= 3)) return 'hot';
+  if (order.priority === 'high' || (days !== null && days <= 7)) return 'watch';
+  return 'clear';
+}
+
+function riskText(order) {
+  const days = deadlineDays(order.deadline);
+  if (days !== null && days < 0) return `${Math.abs(days)}d late`;
+  if (days === 0) return 'due today';
+  if (order.priority === 'urgent') return 'urgent job';
+  if (days !== null && days <= 7) return `${days}d left`;
+  return 'on track';
 }
 
 function workflowRail(activeStatus) {
@@ -304,63 +335,107 @@ function workflowRail(activeStatus) {
   `).join('')}</div>`;
 }
 
+function compactOrderRow(order) {
+  return `<a class="ops-row ${riskClass(order)}" href="/orders/${order.id}">
+    <span>
+      <strong>${order.customer_name}</strong>
+      <small>${order.shop_name} · ${order.product_type}</small>
+    </span>
+    <b>${statusLabel(order.status)}</b>
+    <em>${riskText(order)}</em>
+    <i>${money(order.estimated_cost)}</i>
+  </a>`;
+}
+
+function moduleCard(title, copy, tags) {
+  return `<article class="module-card">
+    <h3>${title}</h3>
+    <p>${copy}</p>
+    <div>${tags.map(tag => `<span>${tag}</span>`).join('')}</div>
+  </article>`;
+}
+
 function investorPage(req) {
   const snapshot = businessSnapshot();
   const topOrders = snapshot.orders
     .slice()
     .sort((a, b) => Number(b.estimated_cost || 0) - Number(a.estimated_cost || 0))
     .slice(0, 4);
+  const heroOrder = topOrders[0] || snapshot.orders[0];
+  const riskQueue = snapshot.orders
+    .slice()
+    .sort((a, b) => {
+      const aDays = deadlineDays(a.deadline) ?? 999;
+      const bDays = deadlineDays(b.deadline) ?? 999;
+      return aDays - bDays;
+    })
+    .slice(0, 5);
+  const lowStock = db.prepare('SELECT * FROM fabric_inventory ORDER BY meters_available ASC LIMIT 4').all();
   const stagePreview = STATUSES.map(([key, label]) => {
     const count = snapshot.orders.filter((order) => order.status === key).length;
     return `<div><strong>${count}</strong><span>${label}</span></div>`;
   }).join('');
 
   return layout(req, 'Investor demo', `
-    <section class="investor-hero" style="--hero-image:url('${WORKSHOP_IMAGE}')">
-      <div class="investor-copy">
-        <p class="eyebrow">Investor demo · R Company OS</p>
-        <h1>Operating system for premium custom fashion production.</h1>
-        <p class="lede">R Company turns WhatsApp chaos, handwritten measurements, advance payments, karigar handoffs, fabric risk, and delivery deadlines into one investor-ready workflow layer.</p>
+    <section class="command-hero" style="--hero-image:url('${WORKSHOP_IMAGE}')">
+      <aside class="investor-sidebar">
+        <p class="eyebrow">R Company Investor Room</p>
+        <h1>Premium fashion production, controlled like a real operating system.</h1>
+        <p>Built for boutiques and embroidery workshops where every missed measurement, fabric delay, unpaid balance, and WhatsApp follow-up costs money.</p>
         <div class="actions">
-          <a class="button" href="/login">Open live app demo</a>
-          <a class="button secondary" href="/admin/orders">View production board</a>
+          <a class="button" href="/demo/admin">Enter admin demo</a>
+          <a class="button secondary" href="/demo/shopkeeper">Shopkeeper view</a>
         </div>
-      </div>
-      <aside class="deal-room">
-        <div class="panel-head"><span></span><p>Demo company pulse</p></div>
-        ${statCard('Booked pipeline', money(snapshot.totalValue), `${snapshot.orders.length} seeded production orders`)}
-        ${statCard('Advance collected', money(snapshot.advance), 'cash discipline visible')}
-        ${statCard('Shopkeeper accounts', snapshot.buyers, 'repeat B2B demand surface')}
+        <div class="proof-stack">
+          <span><b>${snapshot.orders.length}</b> live demo orders</span>
+          <span><b>${money(snapshot.totalValue)}</b> booked pipeline</span>
+          <span><b>${snapshot.buyers}</b> B2B shopkeeper accounts</span>
+        </div>
       </aside>
+
+      <section class="live-console">
+        <div class="console-top">
+          <span>Live product surface</span>
+          <b>Investor demo mode</b>
+        </div>
+        <div class="console-grid">
+          <article class="active-packet">
+            <p class="eyebrow">Production packet</p>
+            <h2>${heroOrder.customer_name}</h2>
+            <p>${heroOrder.product_type} for ${heroOrder.shop_name}. ${heroOrder.fabric_type} / ${heroOrder.color}. ${heroOrder.embroidery_details}</p>
+            <div class="packet-facts">
+              <div><span>Order value</span><strong>${money(heroOrder.estimated_cost)}</strong></div>
+              <div><span>Advance</span><strong>${money(heroOrder.advance_amount)}</strong></div>
+              <div><span>Deadline</span><strong>${daysUntil(heroOrder.deadline)}</strong></div>
+              <div><span>Risk</span><strong>${riskText(heroOrder)}</strong></div>
+            </div>
+            ${workflowRail(heroOrder.status)}
+            <a class="button ghost full-button" href="/demo/order/${heroOrder.id}">Open this order packet</a>
+          </article>
+          <aside class="triage-panel">
+            <h2>Owner triage</h2>
+            ${riskQueue.map(compactOrderRow).join('')}
+          </aside>
+        </div>
+      </section>
     </section>
 
-    <section class="credibility-strip">
-      <span>Measurement vault</span>
-      <span>Advance / balance tracking</span>
-      <span>Karigar workflow</span>
-      <span>Fabric inventory risk</span>
-      <span>Shopkeeper self-service</span>
+    <section class="metric-wall">
+      ${statCard('Booked pipeline', money(snapshot.totalValue), `${snapshot.orders.length} active and historical jobs`)}
+      ${statCard('Advance collected', money(snapshot.advance), `${money(snapshot.outstanding)} balance visible`)}
+      ${statCard('Due this week', snapshot.dueThisWeek, `${snapshot.risk} jobs need owner attention`)}
+      ${statCard('Gross margin target', `${snapshot.grossMargin}%`, 'premium custom production model')}
     </section>
 
     <section class="section-head">
-      <p class="eyebrow">What investor sees in 90 seconds</p>
-      <h2>Not a brochure. A live operating loop.</h2>
+      <p class="eyebrow">Built from actual market pattern</p>
+      <h2>The app proves the workflow, not just the brand.</h2>
     </section>
-    <section class="demo-flow">
-      <article><b>1</b><h3>Shopkeeper books order</h3><p>Garment, fabric, color, measurements, deadline, payment advance, and embroidery details enter one production packet.</p></article>
-      <article><b>2</b><h3>Owner controls workload</h3><p>Orders move through procurement, embroidery, stitching, QC, ready, dispatch, and delivery with risk visible.</p></article>
-      <article><b>3</b><h3>Buyer stops calling</h3><p>Status, payment, expected delivery, and notes become self-service instead of scattered WhatsApp follow-ups.</p></article>
-    </section>
-
-    <section class="section-head">
-      <p class="eyebrow">Live demo data</p>
-      <h2>Production cockpit with business metrics.</h2>
-    </section>
-    <section class="stats-strip investor-stats">
-      ${statCard('Active jobs', snapshot.active, `${snapshot.risk} require attention`)}
-      ${statCard('Average ticket', money(snapshot.avgTicket), 'premium custom work')}
-      ${statCard('On-time target', `${snapshot.onTime}%`, 'demo operating SLA')}
-      ${statCard('WhatsApp reduction', `${snapshot.whatsappReduction}%`, 'self-service promise')}
+    <section class="module-grid">
+      ${moduleCard('Shopkeeper order desk', 'A boutique can create a rich order packet with garment, fabric, measurement, deadline, priority, and instructions instead of sending scattered WhatsApp messages.', ['intake', 'measurements', 'repeat orders'])}
+      ${moduleCard('Production command center', 'The owner sees every order by production stage, risk level, due date, value, and next action before it becomes a late delivery.', ['kanban', 'deadlines', 'handoffs'])}
+      ${moduleCard('Payment and delivery control', 'Advance, balance, delivery readiness, dispatch status, and internal notes stay tied to the order instead of living in memory.', ['advance', 'balance', 'dispatch'])}
+      ${moduleCard('Inventory watchlist', 'Fabric stock and reorder alerts show the operational wedge investors expect from a real workshop system.', ['fabric', 'reorder', 'risk'])}
     </section>
 
     <section class="ops-demo">
@@ -368,12 +443,16 @@ function investorPage(req) {
         <h2>Stage distribution</h2>
         <div class="stage-preview">${stagePreview}</div>
       </article>
+      <article class="panel">
+        <h2>Fabric risk</h2>
+        <div class="fabric-watch">${lowStock.map(f => `<div class="${f.meters_available <= f.reorder_level ? 'warn' : ''}"><strong>${f.fabric_name}</strong><span>${f.color}</span><b>${f.meters_available}m</b><small>reorder at ${f.reorder_level}m</small></div>`).join('')}</div>
+      </article>
       <article class="panel thesis-panel">
-        <h2>Why this can become a real business</h2>
+        <h2>Investor thesis</h2>
         <ul>
-          <li>Indian boutiques already sell high-value custom orders but still coordinate through fragmented WhatsApp and notebooks.</li>
-          <li>Shopkeepers have repeat order behavior, making R Company a B2B workflow wedge, not a one-time ecommerce store.</li>
-          <li>Production data becomes the moat: measurements, deadlines, karigar capacity, fabric demand, advances, and delivery history.</li>
+          <li>Tailoring software references converge on the same pain: measurements, promised dates, production tracking, payments, and customer status calls.</li>
+          <li>R Company can start as its own workshop OS, then expand into a B2B portal for boutiques that already bring repeat premium orders.</li>
+          <li>The data moat is operational: measurement history, fabric demand, karigar capacity, payment discipline, and delivery reliability.</li>
         </ul>
       </article>
     </section>
@@ -388,6 +467,21 @@ function investorPage(req) {
 
 app.get('/', (req, res) => res.send(investorPage(req)));
 app.get('/investor', (req, res) => res.send(investorPage(req)));
+
+app.get('/demo/:role', (req, res) => {
+  const email = req.params.role === 'shopkeeper' ? 'arif@textiles.com' : 'admin@rcompany.com';
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (!user) return res.redirect('/login');
+  req.session.user = { id: user.id, email: user.email, role: user.role, shop_name: user.shop_name };
+  res.redirect(user.role === 'admin' ? '/admin/orders' : '/dashboard');
+});
+
+app.get('/demo/order/:id', (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get('admin@rcompany.com');
+  if (!user) return res.redirect('/login');
+  req.session.user = { id: user.id, email: user.email, role: user.role, shop_name: user.shop_name };
+  res.redirect(`/orders/${req.params.id}`);
+});
 
 app.get('/login', (req, res) => {
   res.send(layout(req, 'Login', `
@@ -419,6 +513,9 @@ app.get('/dashboard', requireAuth, (req, res) => {
   if (req.session.user.role === 'admin') return res.redirect('/admin/orders');
   const orders = db.prepare('SELECT * FROM orders WHERE user_id = ? ORDER BY updated_at DESC').all(req.session.user.id);
   const value = orders.reduce((sum, order) => sum + Number(order.estimated_cost || 0), 0);
+  const nextOrder = orders
+    .slice()
+    .sort((a, b) => (deadlineDays(a.deadline) ?? 999) - (deadlineDays(b.deadline) ?? 999))[0];
   res.send(layout(req, 'Shopkeeper dashboard', `
     <section class="page-head">
       <div><p class="eyebrow">${req.session.user.shop_name}</p><h1>Shopkeeper workspace</h1></div>
@@ -429,6 +526,15 @@ app.get('/dashboard', requireAuth, (req, res) => {
       ${statCard('Pipeline', money(value), 'estimated total')}
       ${statCard('Next deadline', orders[0] ? daysUntil(orders[0].deadline) : 'None', 'latest active job')}
     </section>
+    ${nextOrder ? `<section class="buyer-status panel wide">
+      <div>
+        <p class="eyebrow">Client-ready status</p>
+        <h2>${nextOrder.customer_name} · ${nextOrder.product_type}</h2>
+        <p>${statusLabel(nextOrder.status)}. ${daysUntil(nextOrder.deadline)}. Advance ${money(nextOrder.advance_amount)} against ${money(nextOrder.estimated_cost)} estimate.</p>
+      </div>
+      ${workflowRail(nextOrder.status)}
+      <a class="button ghost" href="/orders/${nextOrder.id}">Open status page</a>
+    </section>` : ''}
     <section class="grid cards">${orders.map(orderCard).join('')}</section>
   `));
 });
@@ -516,8 +622,14 @@ app.get('/admin/orders', requireAdmin, (req, res) => {
   const fabrics = db.prepare('SELECT * FROM fabric_inventory ORDER BY meters_available ASC').all();
   const allOrders = db.prepare('SELECT o.*, u.shop_name FROM orders o JOIN users u ON u.id = o.user_id ORDER BY o.updated_at DESC').all();
   const totalValue = allOrders.reduce((sum, order) => sum + Number(order.estimated_cost || 0), 0);
+  const outstanding = allOrders.reduce((sum, order) => sum + Math.max(0, Number(order.estimated_cost || 0) - Number(order.advance_amount || 0)), 0);
   const activeCount = allOrders.filter(order => order.status !== 'delivered').length;
   const dueSoon = allOrders.filter(order => order.deadline && new Date(`${order.deadline}T00:00:00`) - new Date() < 7 * 86400000).length;
+  const urgentOrders = allOrders
+    .filter(order => riskClass(order) !== 'clear')
+    .sort((a, b) => (deadlineDays(a.deadline) ?? 999) - (deadlineDays(b.deadline) ?? 999))
+    .slice(0, 4);
+  const readyOrders = allOrders.filter(order => ['ready', 'dispatched'].includes(order.status)).slice(0, 4);
   const board = STATUSES.map(([key, label]) => {
     const items = allOrders.filter(order => order.status === key);
     return `<section class="kanban-column"><header><span>${label}</span><b>${items.length}</b></header>${items.map(orderCard).join('') || '<p class="empty">No jobs in this stage</p>'}</section>`;
@@ -532,6 +644,20 @@ app.get('/admin/orders', requireAdmin, (req, res) => {
       ${statCard('Active jobs', activeCount, `${allOrders.length} total orders`)}
       ${statCard('Due within 7 days', dueSoon, 'needs supervision')}
       ${statCard('Fabric alerts', fabrics.filter(f => f.meters_available <= f.reorder_level).length, 'below reorder level')}
+    </section>
+    <section class="ops-grid admin-grid">
+      <article class="panel">
+        <h2>Today owner must decide</h2>
+        <div class="ops-list">${urgentOrders.map(compactOrderRow).join('') || '<p class="muted">No urgent jobs right now.</p>'}</div>
+      </article>
+      <article class="panel">
+        <h2>Cash and dispatch lock</h2>
+        <div class="cash-lock">
+          <strong>${money(outstanding)}</strong>
+          <span>open balance before all current jobs are closed</span>
+        </div>
+        <div class="ops-list">${readyOrders.map(compactOrderRow).join('') || '<p class="muted">No ready/dispatch jobs.</p>'}</div>
+      </article>
     </section>
     ${status ? `<section class="grid cards">${orders.map(order => orderCard(order).replace('Open production packet', `${order.shop_name} · Open`)).join('')}</section>` : `<section class="kanban-board">${board}</section>`}
     <section class="panel wide">

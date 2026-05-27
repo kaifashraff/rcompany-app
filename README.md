@@ -5,8 +5,10 @@ Investor-grade full-stack operating-system demo for R Company, built for premium
 ## Features
 
 - Investor demo page with business pulse, operating thesis, stage distribution, and high-value production packets
+- Investor control-room first screen with live product surface, owner triage, demo auto-login, and production packet deep links
 - Shopkeeper login and order dashboard
 - Admin production board
+- Owner decision queue with deadline risk, cash lock, dispatch readiness, and fabric watchlist
 - 8-stage tailoring and embroidery workflow
 - Order timeline tracking
 - Internal admin notes
